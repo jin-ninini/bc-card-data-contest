@@ -1,0 +1,20 @@
+# BC카드 원본 데이터 절대 커밋 금지 (보안관리 서약 대상)
+data/raw/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# Jupyter
+notebooks/.ipynb_checkpoints/
+
+# 로컬 Claude Code 설정 (프로젝트 산출물 아님)
+.claude/
