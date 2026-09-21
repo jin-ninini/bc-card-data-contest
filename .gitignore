@@ -1,6 +1,12 @@
 # BC카드 원본 데이터 절대 커밋 금지 (보안관리 서약 대상)
 data/raw/
 
+# BC카드 원본 데이터에서 파생된 행 단위 재구성본 (사실상 원본과 동일 수준 — 보안관리 서약 대상)
+data/processed/
+
+# 참가자 제공 참고자료 (BC카드 자체 저작물, 재배포 권한 없음)
+data/reference/
+
 # Python
 __pycache__/
 *.pyc
