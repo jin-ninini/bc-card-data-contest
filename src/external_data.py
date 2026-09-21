@@ -35,6 +35,10 @@ VISA_GROUPS: dict[str, list[str]] = {
 }
 ALL_GROUP_COLS = [c for cols in VISA_GROUPS.values() for c in cols]
 
+# 카드데이터 feature_engineering.LOW_SAMPLE_QUANTILE(0.10)과 동일 기준을
+# 법무부 등록외국인 총합계에도 적용해 저표본 지역을 동일한 방식으로 정의한다.
+LOW_MOJ_SAMPLE_QUANTILE = 0.10
+
 
 def load_moj_visa_by_region(path: Path = MOJ_XLSX_PATH) -> pd.DataFrame:
     """법무부 시군구x체류자격(대분류) xlsx를 읽어 지역별 성별-총계 행만 추출한다."""
@@ -69,6 +73,17 @@ def compute_visa_group_shares(moj_df: pd.DataFrame) -> pd.DataFrame:
         df[f"{group_name}_인원"] = moj_df[cols].sum(axis=1)
     for group_name in VISA_GROUPS:
         df[f"{group_name}_비중"] = df[f"{group_name}_인원"] / df["총합계"] * 100
+
+    # 법무부 총합계(등록외국인 수)는 지역별 편차가 극단적으로 크다(실측 최소 1명 ~
+    # 최대 40,479명). 총합계가 매우 작은 지역은 비중(%) 값이 개인 1~2명 단위로도
+    # 크게 흔들려(예: 총합계=1인 지역은 그 1명의 자격이 곧바로 100%/0%가 됨) 통계
+    # 검정에 노이즈를 더할 수 있다. 카드데이터 쪽에 이미 있는 `low_sample`(하위
+    # 10분위) 플래그와 동일한 기준을 법무부 쪽에도 적용해, 강건성 검증(재검정) 시
+    # 이 지역들을 제외해볼 수 있도록 플래그만 붙여 둔다(기본 분석에서 제외하지는
+    # 않음 — 배제 여부는 external_data.run_visa_validation_robustness에서 결정).
+    threshold = df["총합계"].quantile(LOW_MOJ_SAMPLE_QUANTILE)
+    df["moj_low_sample"] = df["총합계"] < threshold
+    df.attrs["moj_low_sample_threshold"] = threshold
     return df
 
 
@@ -139,6 +154,43 @@ def run_visa_validation(merged_df: pd.DataFrame, seg_a_label: str = "생활밀�
             "유의(p<0.05)": p_value < 0.05,
         })
 
+    return pd.DataFrame(rows)
+
+
+def run_visa_validation_robustness(
+    merged_df: pd.DataFrame, seg_a_label: str = "생활밀착형"
+) -> pd.DataFrame:
+    """강건성 점검: 법무부 저표본(moj_low_sample) 지역을 제외해도 핵심 결론이 유지되는지 재검정한다.
+
+    `merge_segment_with_visa` 결과에는 `moj_low_sample` 플래그가 이미 포함되어 있다
+    (compute_visa_group_shares에서 생성). 이 지역들(등록외국인 총합계 하위 10분위,
+    예: 1명인 지역도 존재)을 제외한 뒤 동일한 Mann-Whitney U 검정을 다시 수행해,
+    원본 결과가 소수의 불안정한 비중값 때문에 만들어진 착시가 아님을 확인한다.
+    """
+    from scipy import stats
+
+    assert "moj_low_sample" in merged_df.columns, (
+        "merged_df에 moj_low_sample 컬럼이 없습니다. "
+        "compute_visa_group_shares() 결과를 merge_segment_with_visa()에 넣었는지 확인하세요."
+    )
+    robust_df = merged_df.loc[~merged_df["moj_low_sample"]]
+    n_excluded = int(merged_df["moj_low_sample"].sum())
+
+    rows = []
+    for group_name in VISA_GROUPS:
+        col = f"{group_name}_비중"
+        a_vals = robust_df.loc[robust_df["segment"] == seg_a_label, col].dropna()
+        other_vals = robust_df.loc[robust_df["segment"] != seg_a_label, col].dropna()
+        u_stat, p_value = stats.mannwhitneyu(a_vals, other_vals, alternative="two-sided")
+        rows.append({
+            "체류자격그룹": group_name,
+            "제외지역수": n_excluded,
+            "잔여지역수": len(robust_df),
+            f"{seg_a_label}_평균(저표본제외)": a_vals.mean(),
+            "나머지_평균(저표본제외)": other_vals.mean(),
+            "p_value(저표본제외)": p_value,
+            "유의(p<0.05)": p_value < 0.05,
+        })
     return pd.DataFrame(rows)
 
 

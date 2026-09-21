@@ -95,6 +95,42 @@ def run_kmeans_clustering(features: pd.DataFrame, k_range=range(2, 9)) -> tuple[
     return df, meta
 
 
+def bootstrap_cluster_stability(
+    X: np.ndarray,
+    k_range=range(2, 9),
+    n_bootstrap: int = 50,
+    subsample_frac: float = 0.8,
+    random_state: int = RANDOM_STATE,
+) -> dict[int, float]:
+    """K별 군집 안정성을 서브샘플링 기반 Adjusted Rand Index(ARI)로 점검한다.
+
+    실측 결과 K=2~8 구간의 실루엣 스코어가 0.15~0.21로 서로 근접해(K=3이 최댓값이지만
+    K=7과 격차가 0.0034에 불과) "K=3이 유일하게 뚜렷한 최적값"이라 말하기엔 근거가
+    얕다. 이를 보완하기 위해, 각 K에 대해 전체 데이터로 학습한 기준 라벨과, 데이터의
+    80%를 무작위 비복원추출한 뒤 재학습한 라벨 간 ARI를 반복 측정한다. ARI가 1에
+    가까울수록 "군집 결과가 표본 변동에 덜 민감하다(더 안정적/재현 가능하다)"는 뜻이며,
+    실루엣 스코어(군집 형태의 조밀도)와는 독립적인 기준이므로 K 선택을 교차검증하는
+    용도로 쓴다.
+    """
+    from sklearn.metrics import adjusted_rand_score
+
+    n = X.shape[0]
+    rng = np.random.RandomState(random_state)
+    subsample_size = int(n * subsample_frac)
+
+    stability_by_k: dict[int, float] = {}
+    for k in k_range:
+        full_labels = KMeans(n_clusters=k, random_state=random_state, n_init=10).fit(X).labels_
+        aris = []
+        for _ in range(n_bootstrap):
+            idx = rng.choice(n, size=subsample_size, replace=False)
+            seed = int(rng.randint(0, 1_000_000))
+            sub_labels = KMeans(n_clusters=k, random_state=seed, n_init=10).fit(X[idx]).labels_
+            aris.append(adjusted_rand_score(full_labels[idx], sub_labels))
+        stability_by_k[k] = float(np.mean(aris))
+    return stability_by_k
+
+
 def _pca_2d(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     from sklearn.decomposition import PCA
 
